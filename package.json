@@ -1,0 +1,32 @@
+{
+  "name": "knowledge-graph-second-brain",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "An animated 3D knowledge graph with persistent memory, driven by Claude or ChatGPT, that speaks to you.",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "node --watch server/index.js",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "cross-env NODE_ENV=production node server/index.js",
+    "serve": "npm run build && npm start",
+    "seed": "node scripts/seed.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "openai": "^4.77.0",
+    "three": "^0.171.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "vite": "^6.0.7"
+  }
+}

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#04060f" />
+    <title>Second Brain — 3D Knowledge Graph</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='30' fill='none' stroke='%236ee7ff' stroke-width='6'/%3E%3Ccircle cx='50' cy='50' r='12' fill='%23a78bfa'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="graph"></canvas>
+      <div id="vignette"></div>
+    </div>
+
+    <!-- top bar -->
+    <header class="hud hud-top">
+      <div class="brand">
+        <span class="brand-orb" id="brandOrb"></span>
+        <div>
+          <div class="brand-name" id="brainName">Second Brain</div>
+          <div class="brand-sub" id="statusLine">connecting…</div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <button class="tool" id="btnVoice" title="Toggle speech (V)"><span class="ico">🔊</span><span>Voice</span></button>
+        <button class="tool" id="btnMic" title="Push to talk (Space)"><span class="ico">🎙</span><span>Talk</span></button>
+        <button class="tool" id="btnConsolidate" title="Sweep the transcript into memory">
+          <span class="ico">🧠</span><span>Consolidate</span>
+        </button>
+        <button class="tool" id="btnReset" title="Reset camera (R)"><span class="ico">⌖</span><span>Recenter</span></button>
+        <a class="tool" id="btnExport" href="/api/export" download title="Download memory as JSON">
+          <span class="ico">⭳</span><span>Export</span>
+        </a>
+      </div>
+    </header>
+
+    <!-- left: stats, search, legend -->
+    <aside class="hud hud-left" id="leftPanel">
+      <div class="panel">
+        <div class="panel-head">
+          <span>Memory</span>
+          <span class="chip" id="statChip">0 · 0</span>
+        </div>
+        <div class="searchbox">
+          <input id="searchInput" type="search" placeholder="Search memories…" autocomplete="off" />
+        </div>
+        <div id="searchResults" class="results"></div>
+        <div class="legend" id="legend"></div>
+      </div>
+
+      <div class="panel node-card hidden" id="nodeCard">
+        <div class="panel-head">
+          <span id="nodeCardType">node</span>
+          <button class="x" id="nodeCardClose" aria-label="Close">×</button>
+        </div>
+        <h3 id="nodeCardTitle"></h3>
+        <p id="nodeCardSummary"></p>
+        <div class="meter" title="importance"><i id="nodeCardImportance"></i></div>
+        <div id="nodeCardContent" class="node-content"></div>
+        <div id="nodeCardLinks" class="links"></div>
+        <div class="node-actions">
+          <button class="mini" id="nodeAsk">Ask about this</button>
+          <button class="mini danger" id="nodeForget">Forget</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- right: conversation -->
+    <section class="hud hud-right" id="chatPanel">
+      <div class="panel chat">
+        <div class="panel-head">
+          <span>Conversation</span>
+          <button class="x" id="chatCollapse" aria-label="Collapse">−</button>
+        </div>
+        <div class="messages" id="messages">
+          <div class="msg system">
+            <p>
+              This is your second brain. Tell it something and it will remember — it builds the graph
+              behind this text as you talk.
+            </p>
+            <p class="hint">Try: “Remember that I'm learning Portuguese and my tutor is Ana, Tuesdays at 7.”</p>
+          </div>
+        </div>
+        <div class="composer">
+          <textarea id="input" rows="1" placeholder="Say something to your brain…"></textarea>
+          <button id="send" class="send" aria-label="Send">↵</button>
+        </div>
+        <div class="composer-status" id="composerStatus"></div>
+      </div>
+    </section>
+
+    <!-- center bottom: what the camera is looking at -->
+    <div class="focus-caption" id="focusCaption"></div>
+
+    <button class="panel-toggle" id="panelToggle" aria-label="Toggle panels">☰</button>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
