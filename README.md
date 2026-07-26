@@ -30,18 +30,36 @@ Tests need no API key and no network:
 npm test
 ```
 
-### Which key do I need?
+### Already pay for Claude Max or ChatGPT Plus?
 
-Exactly one of these brings it to life:
+Use those instead of buying API credits — **[docs/SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md)**.
+
+Neither subscription includes API access; those are separately-billed products. But
+both Claude and ChatGPT speak MCP, so the model can call *this* app rather than the
+other way round:
+
+```bash
+npm run serve                     # keep running
+claude mcp add second-brain -- node "$PWD/mcp/server.js"     # Claude Max
+npm run mcp:http                  # ChatGPT connector URL (needs a tunnel)
+```
+
+Your subscription does the thinking, the graph does the remembering, and the 3D view
+animates live as memories are written from either app.
+
+To keep *this* app's own interface — 3D **and** voice — on your Max plan, run
+`claude` once to sign in and set `BRAIN_PROVIDER=claude-code`.
+
+### Or use API keys
 
 | Key | What you get |
 |---|---|
-| `ANTHROPIC_API_KEY` | Claude as the brain. Default, and the better one for this — it reasons harder about what's worth linking. |
+| `ANTHROPIC_API_KEY` | Claude as the brain. The better one for this — it reasons harder about what's worth linking. |
 | `OPENAI_API_KEY` | ChatGPT as the brain. Also unlocks real embeddings and a much better voice. |
 
-Set both and you get the best of both: Claude thinks, OpenAI supplies embeddings and the voice. Switch brains any time with `BRAIN_PROVIDER=anthropic|openai`.
+Set both and you get the best of both: Claude thinks, OpenAI supplies embeddings and the voice. Switch any time with `BRAIN_PROVIDER=anthropic|openai|claude-code`.
 
-With **no key at all** the graph, search, and 3D view still work — nothing will talk back.
+With **no key and no subscription route** the graph, search, and 3D view still work — nothing will talk back.
 
 ---
 
@@ -114,7 +132,8 @@ All optional except the key. See `.env.example`.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `BRAIN_PROVIDER` | auto | `anthropic` or `openai`; auto-picks whichever key exists |
+| `BRAIN_PROVIDER` | auto | `anthropic`, `openai`, or `claude-code` (Max subscription); auto-picks whichever key exists |
+| `CLAUDE_CODE_MODEL` / `_EFFORT` / `_MAX_TURNS` | — | Subscription route only; empty inherits Claude Code's own settings |
 | `ANTHROPIC_MODEL` | `claude-opus-5` | Any current model id |
 | `ANTHROPIC_EFFORT` | `high` | `low`…`max`. How hard it thinks per turn |
 | `OPENAI_MODEL` | `gpt-4o` | Any chat model your account can reach |
@@ -124,10 +143,13 @@ All optional except the key. See `.env.example`.
 | `DATA_DIR` | `./data` | Where memory lives |
 | `PORT` | `8787` | |
 | `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` | — | Point at a proxy, gateway, or local model server |
+| `BRAIN_APP_URL` | `http://127.0.0.1:8787` | Where the MCP server finds this app |
+| `MCP_PORT` | `8788` | Port for the HTTP transport ChatGPT connectors need |
 
 ### API
 
 `GET /api/health` · `GET /api/graph` · `GET /api/search?q=` · `GET /api/node/:id`
+`GET /api/events` (SSE — live graph changes from any source) · `POST /api/mcp/tool`
 `POST /api/chat` (SSE) · `POST /api/consolidate` (SSE) · `POST /api/tts`
 `POST /api/node` · `PATCH /api/node/:id` · `DELETE /api/node/:id` · `POST /api/link`
 `GET /api/export` · `POST /api/import`
@@ -154,7 +176,7 @@ All optional except the key. See `.env.example`.
 
 ## Tests
 
-`npm test` runs 17 tests against mock Anthropic and OpenAI servers that speak
+`npm test` runs 22 tests against mock Anthropic and OpenAI servers that speak
 the real streaming wire formats — no API key, no network, ~3 seconds.
 
 The interesting coverage is the tool loop: tool-call JSON arrives split
@@ -184,18 +206,22 @@ server/
   store.js            JSON-backed graph store, atomic writes
   embeddings.js       OpenAI embeddings + offline fallback
   tools.js            Tool schemas, provider adapters, dispatch
+  events.js           Broadcast bus for live viewers
   providers/
     anthropic.js      Streaming tool loop (adaptive thinking, prompt caching)
     openai.js         Streaming tool loop + TTS
+    claude-code.js    Runs on a Claude Pro/Max subscription via the Agent SDK
 web/src/
   graph3d.js          Force layout, shaders, bloom, camera, labels
   voice.js            Speech out (streamed, sentence-chunked) and in
   main.js             UI wiring, SSE consumption
   api.js              Fetch helpers + SSE-over-POST parser
+mcp/server.js         MCP server (stdio + HTTP) for Claude Desktop / ChatGPT
 scripts/seed.js       Demo graph
 test/
   mocks.js            Scriptable Anthropic/OpenAI streaming mocks
   brain.test.js       Store, memory, tools, and both provider loops
+  mcp.test.js         MCP server driven over real JSON-RPC
 ```
 
 ---

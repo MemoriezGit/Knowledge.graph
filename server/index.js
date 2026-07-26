@@ -8,6 +8,8 @@ import * as store from './store.js';
 import * as memory from './memory.js';
 import * as brain from './brain.js';
 import { speak } from './providers/openai.js';
+import { subscribe, broadcast, viewerCount } from './events.js';
+import { runTool } from './tools.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '..', 'dist');
@@ -48,6 +50,7 @@ app.post('/api/node', async (req, res) => {
       nodes: [req.body],
       links: req.body.links || [],
     });
+    broadcast('graph_delta', { source: 'api' });
     res.json({ node: store.publicNode(created[0] || merged[0]), edges: edges.length });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -57,13 +60,16 @@ app.post('/api/node', async (req, res) => {
 app.patch('/api/node/:id', (req, res) => {
   const node = store.resolveNode(req.params.id);
   if (!node) return res.status(404).json({ error: 'not found' });
-  res.json({ node: store.publicNode(store.updateNode(node.id, req.body)) });
+  const updated = store.updateNode(node.id, req.body);
+  broadcast('graph_delta', { source: 'api' });
+  res.json({ node: store.publicNode(updated) });
 });
 
 app.delete('/api/node/:id', (req, res) => {
   const node = store.resolveNode(req.params.id);
   if (!node) return res.status(404).json({ error: 'not found' });
   store.forgetNode(node.id, { hard: req.query.hard === '1' });
+  broadcast('graph_delta', { source: 'api' });
   res.json({ ok: true });
 });
 
@@ -73,11 +79,14 @@ app.post('/api/link', (req, res) => {
   if (!from || !to) return res.status(400).json({ error: 'unresolved endpoint' });
   const edge = store.createEdge({ from: from.id, to: to.id, rel: req.body.rel, weight: req.body.weight });
   if (!edge) return res.status(400).json({ error: 'edge rejected' });
+  broadcast('graph_delta', { source: 'api' });
   res.json({ edge });
 });
 
 app.delete('/api/link/:id', (req, res) => {
-  res.json({ ok: store.removeEdge(req.params.id) });
+  const ok = store.removeEdge(req.params.id);
+  if (ok) broadcast('graph_delta', { source: 'api' });
+  res.json({ ok });
 });
 
 app.get('/api/search', async (req, res) => {
@@ -92,6 +101,25 @@ app.get('/api/search', async (req, res) => {
         why: r.reason,
       })),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Tool endpoint for the MCP server (mcp/server.js).
+ *
+ * The MCP process proxies here rather than opening the store itself — one
+ * writer avoids clobbering the JSON file, and routing through the app means
+ * external writes still broadcast to every live 3D viewer.
+ */
+app.post('/api/mcp/tool', async (req, res) => {
+  const { name, input } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'expected { name, input }' });
+  try {
+    const outcome = await runTool(name, input || {}, { source: 'mcp' });
+    await store.flush();
+    res.json({ result: outcome.result, isError: !!outcome.isError });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -126,6 +154,20 @@ function openSSE(res) {
   });
   return { emit, close };
 }
+
+/**
+ * Live viewer stream. Any change to the graph — from this UI, from Claude
+ * Desktop, or from ChatGPT over MCP — is pushed here so the 3D view reacts.
+ */
+app.get('/api/events', (req, res) => {
+  const { emit, close } = openSSE(res);
+  const unsubscribe = subscribe(emit);
+  emit('hello', { viewers: viewerCount(), stats: store.stats() });
+  req.on('close', () => {
+    unsubscribe();
+    close();
+  });
+});
 
 app.post('/api/chat', async (req, res) => {
   const { emit, close } = openSSE(res);
@@ -188,6 +230,7 @@ app.post('/api/import', async (req, res) => {
   }
   const snap = store.replaceAll(body);
   await store.flush();
+  broadcast('graph_delta', { source: 'api' });
   await memory.ensureEmbeddings({ limit: 512 });
   res.json(snap);
 });

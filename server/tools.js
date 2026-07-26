@@ -1,5 +1,6 @@
 import * as store from './store.js';
 import * as memory from './memory.js';
+import { broadcast } from './events.js';
 
 /**
  * Provider-neutral tool definitions. Both adapters render from this one list so
@@ -175,7 +176,26 @@ export function toOpenAITools() {
  * Runs a tool and returns { result, events }.
  * `events` are pushed to the browser so the 3D scene reacts in real time.
  */
-export async function runTool(name, input = {}) {
+/**
+ * Runs a tool and returns { result, events }.
+ *
+ * `events` drive the caller's own 3D view. They are also broadcast to every
+ * other open viewer, so a memory written from Claude Desktop or ChatGPT
+ * animates on screen even though no local turn produced it.
+ *
+ * @param {string} name
+ * @param {object} input
+ * @param {{source?: string}} [opts] where the call came from, for the viewer caption
+ */
+export async function runTool(name, input = {}, opts = {}) {
+  const outcome = await dispatch(name, input);
+  for (const event of outcome.events) {
+    broadcast(event.type, { ...event, source: opts.source || 'local' });
+  }
+  return outcome;
+}
+
+async function dispatch(name, input = {}) {
   const events = [];
 
   switch (name) {

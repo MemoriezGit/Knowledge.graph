@@ -7,6 +7,9 @@ function pickProvider() {
   const explicit = (env.BRAIN_PROVIDER || '').trim().toLowerCase();
   if (explicit === 'anthropic' || explicit === 'claude') return 'anthropic';
   if (explicit === 'openai' || explicit === 'chatgpt') return 'openai';
+  // Runs on a Claude Pro/Max subscription via the locally authenticated
+  // Claude Code, rather than on separately-billed API credits.
+  if (explicit === 'claude-code' || explicit === 'subscription' || explicit === 'max') return 'claude-code';
   if (env.ANTHROPIC_API_KEY) return 'anthropic';
   if (env.OPENAI_API_KEY) return 'openai';
   return 'anthropic'; // default target; server reports "no key" until one is set
@@ -47,6 +50,13 @@ export const config = {
     maxTokens: Number(env.OPENAI_MAX_TOKENS || 8000),
   },
 
+  claudeCode: {
+    // Empty means "whatever Claude Code is configured to use".
+    model: env.CLAUDE_CODE_MODEL || '',
+    effort: env.CLAUDE_CODE_EFFORT || '',
+    maxTurns: Number(env.CLAUDE_CODE_MAX_TURNS || 16),
+  },
+
   port: Number(env.PORT || 8787),
   dataDir: path.resolve(process.cwd(), env.DATA_DIR || './data'),
   brainName: env.BRAIN_NAME || 'Atlas',
@@ -59,11 +69,21 @@ export function supportsMidConversationSystem(model) {
 
 export function providerStatus() {
   const p = config.provider;
-  const hasKey = p === 'anthropic' ? !!config.anthropic.apiKey : !!config.openai.apiKey;
+  // The subscription path authenticates through the local Claude Code login,
+  // so there is no key for this server to hold.
+  const hasKey =
+    p === 'claude-code' ? true : p === 'anthropic' ? !!config.anthropic.apiKey : !!config.openai.apiKey;
+  const model =
+    p === 'claude-code'
+      ? config.claudeCode.model || 'claude code (subscription)'
+      : p === 'anthropic'
+        ? config.anthropic.model
+        : config.openai.model;
   return {
     provider: p,
-    model: p === 'anthropic' ? config.anthropic.model : config.openai.model,
+    model,
     hasKey,
+    billing: p === 'claude-code' ? 'claude subscription' : 'api credits',
     // Embeddings and premium voice ride on the OpenAI key regardless of brain.
     embeddings: config.openai.apiKey ? 'openai' : 'local',
     voice: config.openai.apiKey ? 'openai+browser' : 'browser',

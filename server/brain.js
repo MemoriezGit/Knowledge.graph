@@ -3,9 +3,12 @@ import * as store from './store.js';
 import * as memory from './memory.js';
 import * as anthropicProvider from './providers/anthropic.js';
 import * as openaiProvider from './providers/openai.js';
+import * as claudeCodeProvider from './providers/claude-code.js';
 
 function provider() {
-  return config.provider === 'openai' ? openaiProvider : anthropicProvider;
+  if (config.provider === 'openai') return openaiProvider;
+  if (config.provider === 'claude-code') return claudeCodeProvider;
+  return anthropicProvider;
 }
 
 /**
@@ -132,7 +135,9 @@ export async function converse(userText, emit) {
 }
 
 function providerModel() {
-  return config.provider === 'openai' ? config.openai.model : config.anthropic.model;
+  if (config.provider === 'openai') return config.openai.model;
+  if (config.provider === 'claude-code') return config.claudeCode.model || 'claude code (subscription)';
+  return config.anthropic.model;
 }
 
 /**

@@ -15,15 +15,20 @@
     "start": "cross-env NODE_ENV=production node server/index.js",
     "serve": "npm run build && npm start",
     "seed": "node scripts/seed.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "mcp": "node mcp/server.js",
+    "mcp:http": "node mcp/server.js --http"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.65.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.220",
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "openai": "^4.77.0",
-    "three": "^0.171.0"
+    "three": "^0.171.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

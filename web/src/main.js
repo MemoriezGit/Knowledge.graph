@@ -100,6 +100,7 @@ async function init() {
   }
 
   await refreshGraph();
+  connectLiveEvents();
 
   if (!graphData.nodes.length) {
     systemMessage(
@@ -117,6 +118,51 @@ async function refreshGraph() {
   } catch (err) {
     console.warn('graph load failed', err);
   }
+}
+
+/**
+ * Live stream of graph changes from anywhere — this UI, Claude Desktop, or
+ * ChatGPT over MCP. Lets you talk to your brain in one place and watch it grow
+ * in another.
+ */
+function connectLiveEvents() {
+  let refreshTimer;
+  const source = new EventSource('/api/events');
+
+  const scheduleRefresh = () => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshGraph, 350); // coalesce bursts of writes
+  };
+
+  source.addEventListener('graph_delta', (e) => {
+    const data = parse(e);
+    scheduleRefresh();
+    if (data.source && data.source !== 'local') showCaption('memory updated externally');
+  });
+
+  source.addEventListener('focus', (e) => {
+    const data = parse(e);
+    // Only follow the camera for external callers; a local turn already did it.
+    if (data.source && data.source !== 'local' && data.ids?.length) {
+      graph.focus(data.ids, data.note);
+      if (data.note) showCaption(data.note);
+    }
+  });
+
+  source.onerror = () => {
+    // EventSource reconnects on its own; surface it only if it stays down.
+    setTimeout(() => {
+      if (source.readyState === EventSource.CLOSED) setStatus('live updates disconnected', true);
+    }, 4000);
+  };
+
+  const parse = (e) => {
+    try {
+      return JSON.parse(e.data);
+    } catch {
+      return {};
+    }
+  };
 }
 
 function updateStats(stats) {
