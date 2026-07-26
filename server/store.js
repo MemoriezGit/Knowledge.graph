@@ -29,6 +29,7 @@ let adjacency = new Map(); // nodeId -> Set(edgeId)
 
 let saveTimer = null;
 let savePromise = null;
+let savePending = null; // { resolve, reject } for the in-flight savePromise
 let dirty = false;
 
 export function id(prefix) {
@@ -83,16 +84,35 @@ async function writeNow() {
 }
 
 /** Debounced atomic save. Returns a promise that settles when the write lands. */
+/**
+ * Debounced atomic save. Returns a promise that settles when the write lands.
+ *
+ * All callers within one debounce window share a single promise. Minting a new
+ * promise per call would orphan the previous one — its timer gets cleared, so
+ * its `resolve` is never reached and anything awaiting it hangs forever.
+ */
 export function save() {
   dirty = true;
+  if (!savePromise) {
+    savePromise = new Promise((resolve, reject) => {
+      savePending = { resolve, reject };
+    });
+  }
   if (saveTimer) clearTimeout(saveTimer);
-  savePromise = new Promise((resolve, reject) => {
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      writeNow().then(resolve, reject);
-    }, 250);
-  });
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    settleSave(writeNow());
+  }, 250);
   return savePromise;
+}
+
+/** Resolve the shared promise and clear it so the next save() starts a new one. */
+function settleSave(work) {
+  const pending = savePending;
+  savePromise = null;
+  savePending = null;
+  if (!pending) return work;
+  return work.then(pending.resolve, pending.reject);
 }
 
 export async function flush() {
@@ -100,7 +120,12 @@ export async function flush() {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
-  if (dirty) await writeNow();
+  if (!dirty) {
+    // Nothing to write, but a debounced caller may still be waiting on us.
+    settleSave(Promise.resolve());
+    return;
+  }
+  await settleSave(writeNow());
 }
 
 // Best-effort flush so an in-flight memory isn't lost on Ctrl-C.

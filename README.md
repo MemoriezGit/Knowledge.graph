@@ -24,6 +24,12 @@ For a single-process production build:
 npm run serve               # builds the UI, serves everything → http://localhost:8787
 ```
 
+Tests need no API key and no network:
+
+```bash
+npm test
+```
+
 ### Which key do I need?
 
 Exactly one of these brings it to life:
@@ -146,6 +152,28 @@ All optional except the key. See `.env.example`.
 
 ---
 
+## Tests
+
+`npm test` runs 17 tests against mock Anthropic and OpenAI servers that speak
+the real streaming wire formats — no API key, no network, ~3 seconds.
+
+The interesting coverage is the tool loop: tool-call JSON arrives split
+mid-token and has to be reassembled, results fed back, and the loop run to a
+second round. The suite asserts on the exact request shape we send Anthropic
+(adaptive thinking, `effort`, cached system prompt, no sampling params, tool
+results batched into one user message, thinking blocks echoed back unmodified),
+since getting any of those wrong is a 400 in production but invisible locally.
+
+Three of the tests are regression guards for bugs found while building this,
+and each was mutation-tested — the bug reintroduced, the suite confirmed to
+fail on exactly that test, then reverted:
+
+| Guard | The bug it catches |
+|---|---|
+| `concurrent saves share one promise` | `save()` minted a promise per call and cleared the prior timer, orphaning the earlier promise so an awaited save hung forever |
+| `a failed turn leaves no orphan user message` | the user turn was persisted before the provider call, so a failed request left a dangling message replayed as history forever |
+| `request shape matches the API contract` | sending `temperature`, which 400s on Opus 5 |
+
 ## Layout
 
 ```
@@ -165,6 +193,9 @@ web/src/
   main.js             UI wiring, SSE consumption
   api.js              Fetch helpers + SSE-over-POST parser
 scripts/seed.js       Demo graph
+test/
+  mocks.js            Scriptable Anthropic/OpenAI streaming mocks
+  brain.test.js       Store, memory, tools, and both provider loops
 ```
 
 ---
