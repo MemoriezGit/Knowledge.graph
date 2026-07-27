@@ -29,6 +29,8 @@ const TOOL_NAMES = [
   'graph_stats',
 ];
 
+const ALLOWED = new Set(TOOL_NAMES.map((n) => `mcp__memory__${n}`));
+
 let sdk = null;
 async function loadSdk() {
   if (sdk) return sdk;
@@ -63,6 +65,7 @@ export async function streamChat({ system, history, userText, memoryContext, emi
   let finalText = '';
   const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 };
   let sawText = false;
+  const toolNames = new Map(); // tool_use id -> friendly name
 
   const response = query({
     prompt,
@@ -81,10 +84,25 @@ export async function streamChat({ system, history, userText, memoryContext, emi
           args: [MCP_ENTRY, '--app', `http://127.0.0.1:${config.port}`],
         },
       },
+      // Drop Claude Code's built-in toolset entirely. This agent has no
+      // business reading files or running commands — and leaving it on means
+      // MCP tools get deferred behind ToolSearch, costing a round trip and
+      // surfacing an irrelevant "ToolSearch" step in the UI.
+      tools: [],
       allowedTools: TOOL_NAMES.map((n) => `mcp__memory__${n}`),
-      // Memory tools are the only ones exposed, and they are all reversible,
-      // so there is nothing to prompt about — and nobody to answer.
-      permissionMode: 'bypassPermissions',
+      // An explicit allowlist rather than `bypassPermissions`. That mode maps
+      // to --dangerously-skip-permissions, which Claude Code refuses to run as
+      // root — so it breaks outright in a container. This is also the safer
+      // posture: memory tools are auto-approved because they are ours and
+      // reversible, and anything else is denied rather than skipped.
+      permissionMode: 'default',
+      canUseTool: async (toolName) =>
+        ALLOWED.has(toolName)
+          ? { behavior: 'allow' }
+          : {
+              behavior: 'deny',
+              message: `${toolName} is not available here. This agent only manages the knowledge graph.`,
+            },
       includePartialMessages: true,
       maxTurns: config.claudeCode.maxTurns,
       effort: config.claudeCode.effort || undefined,
@@ -97,9 +115,7 @@ export async function streamChat({ system, history, userText, memoryContext, emi
         // Same raw event shape as the Messages API, so the deltas are handled
         // exactly as in providers/anthropic.js.
         const event = message.event;
-        if (event.type === 'content_block_start' && event.content_block?.type === 'thinking') {
-          emit('thinking_start', {});
-        } else if (event.type === 'content_block_delta') {
+        if (event.type === 'content_block_delta') {
           const d = event.delta;
           if (d.type === 'text_delta') {
             if (!sawText) {
@@ -108,7 +124,9 @@ export async function streamChat({ system, history, userText, memoryContext, emi
             }
             finalText += d.text;
             emit('text', { delta: d.text });
-          } else if (d.type === 'thinking_delta') {
+          } else if (d.type === 'thinking_delta' && d.thinking) {
+            // Claude Code omits thinking text by default; only surface it when
+            // there is something to read, or the UI shows an empty block.
             emit('thinking', { delta: d.thinking });
           }
         }
@@ -117,24 +135,30 @@ export async function streamChat({ system, history, userText, memoryContext, emi
 
       if (message.type === 'assistant') {
         for (const block of message.message?.content || []) {
-          if (block.type === 'tool_use') {
-            emit('tool_start', { name: friendly(block.name) });
-            emit('tool_call', { name: friendly(block.name), input: block.input });
-          }
+          if (block.type !== 'tool_use') continue;
+          // Anything that isn't one of our memory tools is Claude Code
+          // internals; showing it would just confuse the user.
+          if (!ALLOWED.has(block.name)) continue;
+          const name = friendly(block.name);
+          toolNames.set(block.id, name);
+          emit('tool_start', { name });
+          emit('tool_call', { name, input: block.input });
         }
         accumulate(usage, message.message?.usage);
         continue;
       }
 
       if (message.type === 'user') {
-        // Tool results come back as a synthetic user turn.
+        // Tool results come back as a synthetic user turn, and carry only the
+        // id — map it back so the UI can close the right pill.
         for (const block of message.message?.content || []) {
-          if (block.type === 'tool_result') {
-            emit('tool_result', { name: 'memory', ok: !block.is_error, result: summarise(block.content) });
-            // The MCP server already broadcast the graph change; nudge this
-            // viewer to reload so the new nodes appear immediately.
-            emit('graph_delta', { type: 'graph_delta' });
-          }
+          if (block.type !== 'tool_result') continue;
+          const name = toolNames.get(block.tool_use_id);
+          if (!name) continue; // a result for a tool we chose not to surface
+          emit('tool_result', { name, ok: !block.is_error, result: summarise(block.content) });
+          // The MCP server already broadcast the graph change; nudge this
+          // viewer to reload so the new nodes appear immediately.
+          emit('graph_delta', { type: 'graph_delta' });
         }
         continue;
       }

@@ -17,7 +17,8 @@
     "seed": "node scripts/seed.js",
     "test": "node --test test/*.test.js",
     "mcp": "node mcp/server.js",
-    "mcp:http": "node mcp/server.js --http"
+    "mcp:http": "node mcp/server.js --http",
+    "doctor": "node scripts/doctor.js"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",

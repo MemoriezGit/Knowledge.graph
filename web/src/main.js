@@ -68,6 +68,10 @@ const ears = new Ears({
 
 let busy = false;
 let voiceOn = true;
+// Browsers refuse to speak until the page has seen a user gesture. External
+// speech can arrive at any time, so arm the audio on the first interaction of
+// any kind rather than only when the user sends a message.
+let audioArmed = false;
 let selectedNode = null;
 let graphData = { nodes: [], edges: [] };
 
@@ -149,6 +153,22 @@ function connectLiveEvents() {
     }
   });
 
+  // The brain talking through an external host (Claude Desktop / ChatGPT).
+  source.addEventListener('speak', (e) => {
+    const data = parse(e);
+    if (!data.text) return;
+    addMessage('brain', data.text).classList.add('external');
+    if (!voiceOn) return;
+    if (audioArmed) {
+      voice.speak(data.text);
+      showCaption('speaking');
+    } else {
+      // Say so rather than failing silently — a mute brain looks broken.
+      el.composerStatus.textContent = 'click anywhere to let it speak';
+      showCaption('click to enable voice');
+    }
+  });
+
   source.onerror = () => {
     // EventSource reconnects on its own; surface it only if it stays down.
     setTimeout(() => {
@@ -179,6 +199,7 @@ async function send(overrideText) {
 
   el.input.value = '';
   autosize();
+  audioArmed = true;
   voice.unlockAudio(); // this call sits inside a user gesture — the only place it works
   voice.cancel();
 
@@ -201,6 +222,7 @@ async function send(overrideText) {
         if (d.labels?.length) showCaption(`recalling: ${d.labels.slice(0, 3).join(', ')}`);
       },
       thinking: (d) => {
+        if (!d.delta) return;
         thinkingEl.style.display = 'block';
         thinkingEl.textContent = (thinkingEl.textContent + d.delta).slice(-600);
         thinkingEl.scrollTop = thinkingEl.scrollHeight;
@@ -462,6 +484,15 @@ function onSearch() {
 
 function wireEvents() {
   graph.onSelect((node) => (node ? showNode(node) : hideNode()));
+
+  const arm = () => {
+    if (audioArmed) return;
+    audioArmed = true;
+    voice.unlockAudio();
+    if (el.composerStatus.textContent === 'click anywhere to let it speak') el.composerStatus.textContent = '';
+  };
+  document.addEventListener('pointerdown', arm, { once: false, capture: true });
+  document.addEventListener('keydown', arm, { once: false, capture: true });
 
   el.send.onclick = () => send();
   el.input.addEventListener('input', autosize);

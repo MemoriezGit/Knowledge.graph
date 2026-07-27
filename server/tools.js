@@ -174,10 +174,6 @@ export function toOpenAITools() {
 
 /**
  * Runs a tool and returns { result, events }.
- * `events` are pushed to the browser so the 3D scene reacts in real time.
- */
-/**
- * Runs a tool and returns { result, events }.
  *
  * `events` drive the caller's own 3D view. They are also broadcast to every
  * other open viewer, so a memory written from Claude Desktop or ChatGPT
@@ -321,6 +317,16 @@ async function dispatch(name, input = {}) {
 
     case 'graph_stats':
       return { result: memory.health(), events };
+
+    // Not advertised in TOOLS: only the MCP server offers this. The in-app
+    // providers already stream their answer to the voice, so exposing it there
+    // would make the brain say everything twice.
+    case 'speak': {
+      const text = String(input.text || '').trim();
+      if (!text) return { result: { error: 'Nothing to say.' }, events, isError: true };
+      events.push({ type: 'speak', text: text.slice(0, 1200) });
+      return { result: { spoken: true, characters: text.length }, events };
+    }
 
     default:
       return { result: { error: `Unknown tool "${name}".` }, events, isError: true };

@@ -40,12 +40,15 @@ other way round:
 
 ```bash
 npm run serve                     # keep running
+npm run doctor                    # checks everything, prints the exact config to paste
 claude mcp add second-brain -- node "$PWD/mcp/server.js"     # Claude Max
-npm run mcp:http                  # ChatGPT connector URL (needs a tunnel)
+npm run mcp:http                  # ChatGPT connector URL + token (needs a tunnel)
 ```
 
 Your subscription does the thinking, the graph does the remembering, and the 3D view
-animates live as memories are written from either app.
+animates live as memories are written from either app. A `speak` tool means the graph
+answers **out loud in its own voice** even when the conversation is happening in
+Claude or ChatGPT.
 
 To keep *this* app's own interface — 3D **and** voice — on your Max plan, run
 `claude` once to sign in and set `BRAIN_PROVIDER=claude-code`.
@@ -73,7 +76,7 @@ With **no key and no subscription route** the graph, search, and 3D view still w
 
 **Shows you what it means.** When the answer centres on particular memories, the model calls `focus_view` and the camera flies to them while it speaks.
 
-**Speaks.** Answers stream out sentence by sentence as they're generated, so it starts talking before it's finished thinking. The core at the centre of the graph pulses to the actual audio amplitude.
+**Speaks.** Answers stream out sentence by sentence as they're generated, so it starts talking before it's finished thinking. The core at the centre of the graph pulses to the actual audio amplitude. It speaks whether you type here or drive it from Claude or ChatGPT — over MCP, the model calls `speak` and your graph answers in its own voice.
 
 **Listens.** Push-to-talk via the browser's speech recogniser (Chrome/Edge).
 
@@ -111,6 +114,7 @@ Memories that get recalled drift *up* in importance; everything decays gently by
 | `get_neighbors` | Walk outward 1–3 hops |
 | `focus_view` | Fly the camera and light nodes up |
 | `graph_stats` | Counts and type breakdown |
+| `speak` | Say something aloud through the 3D view (MCP hosts only — in-app providers already stream to the voice) |
 
 ---
 
@@ -166,17 +170,17 @@ All optional except the key. See `.env.example`.
 
 **Browser voices vary a lot.** Without an OpenAI key you get whatever the OS provides, which on some Linux setups is fairly robotic. With a key, `/api/tts` is used instead and the audio amplitude genuinely drives the animation, rather than being approximated from word-boundary events.
 
-**There is no authentication.** It's built to run on your own machine, and `data/brain.json` is plain text. Don't expose the port to a network you don't trust, and don't tell it secrets you wouldn't write in a text file.
+**The app server itself has no authentication.** It's built to run on your own machine, and `data/brain.json` is plain text. Don't expose port 8787 to a network you don't trust, and don't tell it secrets you wouldn't write in a text file. (The MCP HTTP bridge is different — it always requires a bearer token, since that one is meant to be tunnelled.)
 
 **The transcript is bounded, the graph is not.** Only the last 24 turns are replayed as conversation history — long-term memory is the graph, which is the whole point. If something matters, it needs to be a node; hit **Consolidate** to sweep the recent transcript for anything the model forgot to file.
 
-**Cost.** Every turn sends the system prompt, ~24 turns of history, and 8 tool schemas. The Claude path marks the system prompt for caching, which takes most of the sting out of a long session. Drop `ANTHROPIC_EFFORT` to `medium` or `low` if you're chatting casually rather than thinking hard.
+**Cost.** On the subscription routes there is no per-token bill at all — you spend plan usage, which resets on a rolling window, and the app tells you if you hit the limit. On the API-key routes every turn sends the system prompt, ~24 turns of history, and 8 tool schemas; the Claude path marks the system prompt for caching, which takes most of the sting out of a long session. Drop `ANTHROPIC_EFFORT` to `medium` or `low` if you're chatting casually rather than thinking hard.
 
 ---
 
 ## Tests
 
-`npm test` runs 22 tests against mock Anthropic and OpenAI servers that speak
+`npm test` runs 24 tests against mock Anthropic and OpenAI servers that speak
 the real streaming wire formats — no API key, no network, ~3 seconds.
 
 The interesting coverage is the tool loop: tool-call JSON arrives split
@@ -218,6 +222,7 @@ web/src/
   api.js              Fetch helpers + SSE-over-POST parser
 mcp/server.js         MCP server (stdio + HTTP) for Claude Desktop / ChatGPT
 scripts/seed.js       Demo graph
+scripts/doctor.js     Setup check — verifies the whole chain end to end
 test/
   mocks.js            Scriptable Anthropic/OpenAI streaming mocks
   brain.test.js       Store, memory, tools, and both provider loops

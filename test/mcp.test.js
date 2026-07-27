@@ -173,6 +173,79 @@ test('mcp: exposes the graph as a readable resource', async () => {
   }
 });
 
+test('mcp: speak is exposed and routes through the app so the graph talks', async () => {
+  const app = await stubApp();
+  try {
+    const res = await speakMcp(app.url, [
+      ...HANDSHAKE,
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'speak', arguments: { text: 'Your dentist is Dr. Okafor.' } },
+      },
+    ]);
+
+    const speak = res.get(2).result.tools.find((t) => t.name === 'speak');
+    assert.ok(speak, 'speak is advertised');
+    assert.match(speak.description, /out loud/i);
+
+    const call = app.calls.filter((c) => c.url === '/api/mcp/tool').map((c) => c.body).at(-1);
+    assert.equal(call.name, 'speak');
+    assert.equal(call.input.text, 'Your dentist is Dr. Okafor.');
+  } finally {
+    await app.close();
+  }
+});
+
+test('mcp: the HTTP transport refuses requests without the right bearer token', async () => {
+  const app = await stubApp();
+  const TOKEN = 'a-known-test-token';
+  const port = 8899;
+  const child = spawn(
+    process.execPath,
+    [MCP_ENTRY, '--http', '--port', String(port), '--token', TOKEN, '--app', app.url],
+    { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, NO_PROXY: '127.0.0.1,localhost' } },
+  );
+  // Wait for the listener to come up.
+  await new Promise((resolve, reject) => {
+    child.stderr.on('data', (d) => String(d).includes('MCP over HTTP') && resolve());
+    setTimeout(() => reject(new Error('http transport did not start')), 10000).unref();
+  });
+
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } },
+  });
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
+  const url = `http://127.0.0.1:${port}/mcp`;
+
+  try {
+    const anonymous = await fetch(url, { method: 'POST', headers, body });
+    assert.equal(anonymous.status, 401, 'no token is rejected');
+
+    const wrong = await fetch(url, {
+      method: 'POST',
+      headers: { ...headers, Authorization: 'Bearer not-the-token' },
+      body,
+    });
+    assert.equal(wrong.status, 401, 'a wrong token is rejected');
+
+    const good = await fetch(url, {
+      method: 'POST',
+      headers: { ...headers, Authorization: `Bearer ${TOKEN}` },
+      body,
+    });
+    assert.equal(good.status, 200, 'the right token is accepted');
+  } finally {
+    child.kill();
+    await app.close();
+  }
+});
+
 test('mcp: an unreachable app produces a useful message, not a crash', async () => {
   // Nothing listening on this port.
   const res = await speakMcp('http://127.0.0.1:1', [

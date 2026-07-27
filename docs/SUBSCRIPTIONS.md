@@ -22,7 +22,12 @@ Start the app first — the MCP server is a thin client of it:
 
 ```bash
 npm run serve          # http://localhost:8787, keep this running
+npm run doctor         # checks every link and prints the exact config to paste
 ```
+
+`npm run doctor` is the fastest way to know it's right: it verifies your brain can
+actually answer, that the MCP bridge responds, and prints the literal command and
+JSON for Claude, so nothing here has to be typed from memory.
 
 ### Claude (Max) — Claude Desktop or Claude Code
 
@@ -46,34 +51,47 @@ claude mcp add second-brain -- node "$PWD/mcp/server.js"
 ```
 
 Restart Claude, and it gains `recall_memory`, `remember`, `link_nodes`,
-`update_node`, `forget`, `get_neighbors`, `focus_view`, and `graph_stats`.
-Ask it to remember something, then watch the 3D view.
+`update_node`, `forget`, `get_neighbors`, `focus_view`, `graph_stats`, and
+`speak`. Ask it to remember something, then watch the 3D view.
+
+**It talks back through the graph.** `speak` sends the model's words to the 3D
+view, which reads them aloud and pulses the core to the audio. So even when the
+conversation is happening in Claude or ChatGPT, the second brain on your screen
+is the thing speaking.
 
 ### ChatGPT (Plus/Pro) — custom connector
 
 ChatGPT connectors take a **URL**, so this side needs the HTTP transport:
 
 ```bash
-npm run mcp:http       # http://localhost:8788/mcp
+npm run mcp:http       # prints the URL and a bearer token
 ```
 
-Then in ChatGPT: **Settings → Connectors → Advanced → Developer mode**, on. Add a
-custom connector pointing at your `/mcp` URL.
+It prints something like:
 
-ChatGPT has to be able to *reach* that URL, so unless you're self-hosting on a
+```
+  URL     http://localhost:8788/mcp
+  Token   K3xq...              ← set MCP_TOKEN in .env to keep this stable
+```
+
+**The endpoint always requires that token.** There is no unauthenticated mode: if
+you don't supply one, a random token is generated at startup, because this
+endpoint can read and write everything you have ever told it.
+
+ChatGPT has to be able to *reach* the URL, so unless you're self-hosting on a
 public box you'll need a tunnel:
 
 ```bash
 cloudflared tunnel --url http://localhost:8788    # or: ngrok http 8788
 ```
 
-Use the tunnel's HTTPS URL + `/mcp` as the connector URL.
+Then in ChatGPT: **Settings → Connectors → Advanced → Developer mode**, on. Add a
+custom connector with the tunnel's HTTPS URL + `/mcp`, and the token as its
+bearer/authentication value.
 
-> ⚠️ **The HTTP endpoint is unauthenticated.** Anyone who can reach that URL can
-> read and write your memories. Keep the tunnel private, shut it down when you're
-> not using it, and don't leave the port open on a network you don't control.
-> Both hosts also warn that connecting a model to a tool server exposes you to
-> prompt injection — this one only touches your own graph, but the caution stands.
+> ⚠️ Keep the tunnel private and shut it down when you're not using it. Both
+> hosts also warn that connecting a model to any tool server carries prompt-injection
+> risk — this server only touches your own graph, but the caution stands.
 
 ---
 
@@ -118,13 +136,17 @@ machine running the server, so it's a local-first setup, not something to deploy
 
 ---
 
-## What about ChatGPT driving the app's own UI?
+## What about ChatGPT driving the app's own chat panel?
 
-There is no supported equivalent. OpenAI has no subscription-authenticated
-general chat API — Codex CLI can sign in with a ChatGPT plan, but it's a coding
+There is no supported equivalent — OpenAI has no subscription-authenticated
+general chat API. Codex CLI can sign in with a ChatGPT plan, but it's a coding
 agent, not a general backend, and using it as one would be off-label and fragile.
-So the honest answer is: **the ChatGPT subscription participates through Route 1**,
-where ChatGPT itself is the interface and this app is its memory.
+
+In practice this matters less than it sounds, because of the `speak` tool: with
+Route 1, ChatGPT is the input surface and the 3D brain is still the thing that
+answers out loud. You talk to ChatGPT; your graph replies in its own voice and
+flies the camera to what it's talking about. The only thing you lose is typing
+into *this* app's text box.
 
 ---
 
@@ -134,7 +156,7 @@ where ChatGPT itself is the interface and this app is its memory.
 |---|---|---|
 | Talk in Claude Desktop / Claude app, graph animates alongside | Route 1 (stdio) | Max plan |
 | Talk in ChatGPT, graph animates alongside | Route 1 (HTTP + tunnel) | ChatGPT plan |
-| This app's own 3D + voice interface | Route 2 | Max plan |
+| This app's own 3D + voice interface, typed here | Route 2 | Max plan |
 | This app's own interface, or deploying it somewhere | API keys | Metered per token |
 
 They compose. A common setup is Route 2 for the desk, plus Route 1 on the phone

@@ -26,7 +26,7 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import http from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { TOOLS } from '../server/tools.js';
 
 const args = process.argv.slice(2);
@@ -39,8 +39,40 @@ const APP_URL = (flag('app', process.env.BRAIN_APP_URL || 'http://127.0.0.1:8787
 const USE_HTTP = args.includes('--http');
 const HTTP_PORT = Number(flag('port', process.env.MCP_PORT || 8788));
 
-/** ChatGPT connectors conventionally look for `search` and `fetch`. */
+// Secure by default: HTTP mode always requires a bearer token. If you don't
+// supply one, a random one is generated and printed — there is no unprotected
+// mode, because this endpoint reads and writes everything you have ever told it.
+const HTTP_TOKEN = flag('token', process.env.MCP_TOKEN || '') || randomBytes(24).toString('base64url');
+
+function tokenMatches(header) {
+  const provided = String(header || '').replace(/^Bearer\s+/i, '');
+  const a = Buffer.from(provided);
+  const b = Buffer.from(HTTP_TOKEN);
+  // Compare in constant time; lengths must match first or timingSafeEqual throws.
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Tools offered only over MCP.
+ *
+ * `search`/`fetch` are the names ChatGPT connectors look for by convention.
+ * `speak` is what makes this a second brain that *talks* even when the
+ * conversation is happening in Claude or ChatGPT rather than in our own UI:
+ * the model's words come out of the 3D view, and the core pulses to them.
+ */
 const CHATGPT_TOOLS = [
+  {
+    name: 'speak',
+    description:
+      "Say something out loud through the user's 3D knowledge graph, in its own voice. Call this whenever you have an answer, an observation, or a summary worth hearing — it is how the graph talks back. Plain prose only: it is read aloud, so no markdown, lists, or emoji.",
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'What to say. One or two natural sentences.' },
+      },
+      required: ['text'],
+    },
+  },
   {
     name: 'search',
     description:
@@ -88,6 +120,9 @@ async function runRemoteTool(name, input) {
   if (name === 'search') {
     return callApp('/api/mcp/tool', { method: 'POST', body: { name: 'recall_memory', input: { query: input.query } } });
   }
+  if (name === 'speak') {
+    return callApp('/api/mcp/tool', { method: 'POST', body: { name: 'speak', input: { text: input.text } } });
+  }
   if (name === 'fetch') {
     return callApp('/api/mcp/tool', {
       method: 'POST',
@@ -112,7 +147,10 @@ function buildServer() {
         'over one large one, and always link them to each other and to what is already there. An unconnected ' +
         'node is nearly useless.\n\n' +
         'Call focus_view when your answer centres on particular memories; it flies the camera to them on the ' +
-        "user's screen while you talk.",
+        "user's screen while you talk.\n\n" +
+        'Speak your answers. The graph has a voice and the user is often watching it rather than reading here, ' +
+        'so call speak with what you would say — plain prose, no markdown — alongside your normal reply. ' +
+        'Pair it with focus_view and they will hear the answer while the camera moves to what it is about.',
     },
   );
 
@@ -188,6 +226,12 @@ if (USE_HTTP) {
       return;
     }
 
+    if (!tokenMatches(req.headers.authorization)) {
+      res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
+      res.end(JSON.stringify({ error: 'unauthorized: send Authorization: Bearer <token>' }));
+      return;
+    }
+
     if (!req.url.startsWith('/mcp')) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'MCP endpoint is at /mcp' }));
@@ -226,9 +270,17 @@ if (USE_HTTP) {
   });
 
   httpServer.listen(HTTP_PORT, () => {
-    console.error(`second-brain MCP (http) → http://localhost:${HTTP_PORT}/mcp   app: ${APP_URL}`);
-    console.error('Add that URL as a custom connector in ChatGPT (Settings → Connectors → Developer mode).');
-    console.error('It is unauthenticated — expose it beyond localhost only behind a tunnel you control.');
+    console.error('');
+    console.error(`  second-brain MCP over HTTP    app: ${APP_URL}`);
+    console.error(`  URL     http://localhost:${HTTP_PORT}/mcp`);
+    console.error(`  Token   ${HTTP_TOKEN}`);
+    console.error('');
+    console.error('  In ChatGPT: Settings → Connectors → Advanced → Developer mode, then add a');
+    console.error('  custom connector with that URL and the token as its bearer/auth value.');
+    console.error('  ChatGPT must be able to reach the URL, so from a laptop you need a tunnel:');
+    console.error(`      cloudflared tunnel --url http://localhost:${HTTP_PORT}`);
+    console.error('  Set MCP_TOKEN to keep the same token across restarts.');
+    console.error('');
   });
 } else {
   const transport = new StdioServerTransport();
