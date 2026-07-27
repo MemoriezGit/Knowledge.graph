@@ -639,6 +639,119 @@ body {
   min-height: 15px;
 }
 
+/* ── help ────────────────────────────────────────────────────────────── */
+
+.help-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 5, 14, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.help-backdrop.hidden {
+  display: none;
+}
+
+.help-card {
+  width: min(560px, 100%);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-strong);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.help-body {
+  flex: 1;
+  min-height: 0;
+  padding: 16px 20px 22px;
+  overflow-y: auto;
+  /* Don't hand the scroll to the page behind once this reaches its end. */
+  overscroll-behavior: contain;
+}
+
+.help-body h4 {
+  margin: 18px 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.help-body h4:first-child {
+  margin-top: 4px;
+}
+
+.help-body p {
+  margin: 0 0 8px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #c3d3ee;
+}
+
+.help-body code {
+  padding: 1px 5px;
+  font-size: 12px;
+  background: rgba(110, 231, 255, 0.1);
+  border-radius: 5px;
+}
+
+.examples {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.examples li {
+  padding: 8px 11px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #b6ecff;
+  background: rgba(110, 231, 255, 0.07);
+  border: 1px solid rgba(110, 231, 255, 0.16);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.examples li:hover {
+  background: rgba(110, 231, 255, 0.13);
+  border-color: var(--line-bright);
+}
+
+.keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+
+kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 2px 6px;
+  margin-right: 4px;
+  font: inherit;
+  font-size: 11px;
+  text-align: center;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+}
+
 /* ── focus caption ───────────────────────────────────────────────────── */
 
 .focus-caption {
@@ -740,6 +853,20 @@ body {
     top: auto;
     bottom: 12px;
     height: 52vh;
+  }
+  /* On a phone the help card is the whole screen's worth of content; give it
+     the room rather than making people scroll a modal inside a viewport. */
+  .help-backdrop {
+    padding: 12px;
+  }
+  .help-card {
+    max-height: calc(100dvh - 24px);
+  }
+  .help-body {
+    padding: 14px 16px 18px;
+  }
+  .help-body h4 {
+    margin-top: 14px;
   }
   .hud-left.hidden-mobile,
   .hud-right.hidden-mobile {

@@ -81,7 +81,10 @@ export async function streamChat({ system, history, userText, memoryContext, emi
         memory: {
           type: 'stdio',
           command: process.execPath,
-          args: [MCP_ENTRY, '--app', `http://127.0.0.1:${config.port}`],
+          // `--source brain`: these tool calls are this app's own turn, not a
+          // write arriving from Claude Desktop or ChatGPT, and the 3D view
+          // labels them differently.
+          args: [MCP_ENTRY, '--app', `http://127.0.0.1:${config.port}`, '--source', 'brain'],
         },
       },
       // Drop Claude Code's built-in toolset entirely. This agent has no

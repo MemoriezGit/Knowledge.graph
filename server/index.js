@@ -10,6 +10,7 @@ import * as brain from './brain.js';
 import { speak } from './providers/openai.js';
 import { subscribe, broadcast, viewerCount } from './events.js';
 import { runTool } from './tools.js';
+import { mountMcp, MCP_TOKEN_IS_GENERATED } from './mcp-http.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '..', 'dist');
@@ -116,8 +117,12 @@ app.get('/api/search', async (req, res) => {
 app.post('/api/mcp/tool', async (req, res) => {
   const { name, input } = req.body || {};
   if (!name) return res.status(400).json({ error: 'expected { name, input }' });
+  // `brain` is this app's own subscription provider, which reaches its tools
+  // through the same MCP server. Anything else is another app, and the 3D view
+  // announces those writes as coming from outside.
+  const source = req.body?.source === 'brain' ? 'brain' : 'mcp';
   try {
-    const outcome = await runTool(name, input || {}, { source: 'mcp' });
+    const outcome = await runTool(name, input || {}, { source });
     await store.flush();
     res.json({ result: outcome.result, isError: !!outcome.isError });
   } catch (err) {
@@ -235,6 +240,10 @@ app.post('/api/import', async (req, res) => {
   res.json(snap);
 });
 
+// ── MCP over HTTP, for ChatGPT connectors ────────────────────────────────────
+
+mountMcp(app);
+
 // ── static (production) ──────────────────────────────────────────────────────
 
 if (fs.existsSync(distDir)) {
@@ -253,17 +262,31 @@ await memory.ensureEmbeddings({ limit: 256 });
 
 app.listen(config.port, () => {
   const s = store.stats();
+  const brain =
+    status.provider === 'claude-code'
+      ? 'your Claude subscription'
+      : status.provider === 'anthropic'
+        ? `Claude API · ${status.model}`
+        : `OpenAI API · ${status.model}`;
+
   console.log('');
-  console.log(`  ${config.brainName} — 3D knowledge graph`);
-  console.log(`  brain      : ${status.provider} / ${status.model} ${status.hasKey ? '' : '  ⚠ NO API KEY'}`);
-  console.log(`  embeddings : ${status.embeddings}`);
-  console.log(`  memory     : ${s.nodes} nodes, ${s.edges} edges  (${store.dataFile()})`);
-  console.log(`  api        : http://localhost:${config.port}`);
-  if (fs.existsSync(distDir)) console.log(`  app        : http://localhost:${config.port}`);
-  else console.log(`  app        : http://localhost:5173  (vite dev server)`);
+  console.log(`  ${config.brainName} is running`);
+  console.log('');
+  console.log(`    Open        http://localhost:${config.port}`);
+  console.log(`    Brain       ${brain}${status.hasKey ? '' : '   ⚠ not configured'}`);
+  console.log(`    Memory      ${s.nodes} memories, ${s.edges} connections`);
+  console.log('');
   if (!status.hasKey) {
+    console.log(`  Nothing will talk back yet. Run:  npm run setup`);
     console.log('');
-    console.log(`  ⚠ Set ${status.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'} in .env to bring the brain online.`);
+  } else if (MCP_TOKEN_IS_GENERATED) {
+    // The connector token was generated for this boot only, so a connector
+    // configured against it would break on the next restart. Setup writes a
+    // stable one — but this process keeps the one it started with.
+    console.log(`  To connect Claude or ChatGPT:     npm run setup, then restart this`);
+    console.log('');
+  } else {
+    console.log(`  ChatGPT connector   http://localhost:${config.port}/mcp   (token in .env)`);
+    console.log('');
   }
-  console.log('');
 });

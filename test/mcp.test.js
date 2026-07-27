@@ -1,19 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
+import fs from 'node:fs';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Tests the MCP server that lets a Claude or ChatGPT *subscription* drive the
- * graph. It is spawned as a real subprocess and driven over stdio with real
- * JSON-RPC, against a stub of the app's HTTP API — so this covers the protocol
- * layer and the proxying without needing the full app or any API key.
+ * Tests the two ways a Claude or ChatGPT *subscription* drives the graph:
+ *
+ *   stdio  — mcp/server.js, spawned as a real subprocess and driven with real
+ *            JSON-RPC against a stub of the app's HTTP API (Claude Desktop).
+ *   http   — /mcp inside the app itself, exercised against a really-booted
+ *            server on a scratch data dir (ChatGPT connectors).
+ *
+ * Neither needs an API key: no test here asks the brain to think.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MCP_ENTRY = path.join(__dirname, '..', 'mcp', 'server.js');
+const ROOT = path.join(__dirname, '..');
+const MCP_ENTRY = path.join(ROOT, 'mcp', 'server.js');
+const APP_ENTRY = path.join(ROOT, 'server', 'index.js');
 
 /** Stub of the app's HTTP surface, recording what the MCP server asks for. */
 async function stubApp() {
@@ -41,9 +50,9 @@ async function stubApp() {
 }
 
 /** Drive the MCP server over stdio and collect responses by request id. */
-function speakMcp(appUrl, requests) {
+function speakMcp(appUrl, requests, extraArgs = []) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [MCP_ENTRY, '--app', appUrl], {
+    const child = spawn(process.execPath, [MCP_ENTRY, '--app', appUrl, ...extraArgs], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, NO_PROXY: '127.0.0.1,localhost' },
     });
@@ -79,15 +88,150 @@ function speakMcp(appUrl, requests) {
   });
 }
 
-const HANDSHAKE = [
-  {
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } },
-  },
-  { jsonrpc: '2.0', method: 'notifications/initialized' },
-];
+const INITIALIZE = {
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } },
+};
+
+const HANDSHAKE = [INITIALIZE, { jsonrpc: '2.0', method: 'notifications/initialized' }];
+
+/** An unused port. Racy in principle, fine for a test that binds immediately. */
+async function freePort() {
+  const probe = net.createServer();
+  await new Promise((r) => probe.listen(0, '127.0.0.1', r));
+  const { port } = probe.address();
+  await new Promise((r) => probe.close(r));
+  return port;
+}
+
+/**
+ * Boot the actual app on a scratch data dir, so /mcp is tested as the thing
+ * users run — not a re-creation of it. No API key is set: the brain is never
+ * asked to think here, only to store and recall.
+ */
+async function startApp() {
+  const port = await freePort();
+  const token = 'a-known-test-token';
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-test-'));
+  const child = spawn(process.execPath, [APP_ENTRY], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      MCP_TOKEN: token,
+      DATA_DIR: dataDir,
+      // Pin the provider so the boot path doesn't probe for a local Claude Code
+      // install, which would make the test depend on the machine it runs on.
+      BRAIN_PROVIDER: 'anthropic',
+      ANTHROPIC_API_KEY: '',
+      OPENAI_API_KEY: '',
+      NO_PROXY: '127.0.0.1,localhost',
+    },
+  });
+
+  let stderr = '';
+  child.stderr.on('data', (d) => (stderr += d));
+  await new Promise((resolve, reject) => {
+    const deadline = setTimeout(
+      () => reject(new Error(`app did not start within 20s. stderr: ${stderr.slice(0, 500)}`)),
+      20000,
+    );
+    deadline.unref();
+    child.stdout.on('data', (d) => {
+      if (String(d).includes('is running')) {
+        clearTimeout(deadline);
+        resolve();
+      }
+    });
+    child.on('exit', (code) => reject(new Error(`app exited (${code}). stderr: ${stderr.slice(0, 500)}`)));
+  });
+
+  return {
+    url: `http://127.0.0.1:${port}`,
+    token,
+    stop: async () => {
+      child.kill();
+      await new Promise((r) => child.once('exit', r));
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    },
+  };
+}
+
+/** The tool endpoint the stdio MCP server proxies through. */
+async function callToolOverHttp(appUrl, body) {
+  const res = await fetch(`${appUrl}/api/mcp/tool`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+/** Watch /api/events the way the browser does, while `run` happens. */
+async function watchEvents(appUrl, run) {
+  const res = await fetch(`${appUrl}/api/events`, { headers: { Accept: 'text/event-stream' } });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const seen = [];
+  const pump = (async () => {
+    let buf = '';
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        buf += decoder.decode(value, { stream: true });
+        const frames = buf.split('\n\n');
+        buf = frames.pop();
+        for (const frame of frames) {
+          const name = /^event: (.+)$/m.exec(frame)?.[1];
+          const data = /^data: (.+)$/m.exec(frame)?.[1];
+          if (name) seen.push({ name, data: data ? JSON.parse(data) : {} });
+        }
+      }
+    } catch {
+      /* cancelled */
+    }
+  })();
+
+  await run();
+  await new Promise((r) => setTimeout(r, 300)); // let the last frame land
+  await reader.cancel();
+  await pump;
+  return seen;
+}
+
+/**
+ * One Streamable HTTP request. The transport answers JSON-RPC as a single SSE
+ * frame, so unwrap that to the message the client would actually see.
+ */
+async function postRpc(url, body, { token, session } = {}) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(session ? { 'mcp-session-id': session } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  const data = text
+    .split('\n')
+    .filter((l) => l.startsWith('data:'))
+    .map((l) => l.slice(5).trim())
+    .join('');
+  let message;
+  try {
+    message = data ? JSON.parse(data) : text ? JSON.parse(text) : undefined;
+  } catch {
+    message = undefined;
+  }
+  return { status: res.status, headers: res.headers, message, text };
+}
 
 test('mcp: initializes and advertises the memory tools plus ChatGPT aliases', async () => {
   const app = await stubApp();
@@ -199,50 +343,125 @@ test('mcp: speak is exposed and routes through the app so the graph talks', asyn
   }
 });
 
-test('mcp: the HTTP transport refuses requests without the right bearer token', async () => {
+test('mcp: writes are labelled by who asked, not by which transport they arrived on', async () => {
   const app = await stubApp();
-  const TOKEN = 'a-known-test-token';
-  const port = 8899;
-  const child = spawn(
-    process.execPath,
-    [MCP_ENTRY, '--http', '--port', String(port), '--token', TOKEN, '--app', app.url],
-    { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, NO_PROXY: '127.0.0.1,localhost' } },
-  );
-  // Wait for the listener to come up.
-  await new Promise((resolve, reject) => {
-    child.stderr.on('data', (d) => String(d).includes('MCP over HTTP') && resolve());
-    setTimeout(() => reject(new Error('http transport did not start')), 10000).unref();
-  });
-
-  const body = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } },
-  });
-  const headers = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
-  const url = `http://127.0.0.1:${port}/mcp`;
-
   try {
-    const anonymous = await fetch(url, { method: 'POST', headers, body });
+    const call = {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'graph_stats', arguments: {} },
+    };
+
+    // Another app driving the graph.
+    await speakMcp(app.url, [...HANDSHAKE, call]);
+    assert.equal(app.calls.at(-1).body.source, 'mcp');
+
+    // This app's own subscription provider, which reaches its tools the same
+    // way. Without the distinction the 3D view tells you your own typed
+    // message was an external change.
+    await speakMcp(app.url, [...HANDSHAKE, call], ['--source', 'brain']);
+    assert.equal(app.calls.at(-1).body.source, 'brain');
+  } finally {
+    await app.close();
+  }
+});
+
+test('mcp over http: the /mcp endpoint refuses requests without the right bearer token', async () => {
+  const brain = await startApp();
+  const url = `${brain.url}/mcp`;
+  try {
+    const anonymous = await postRpc(url, INITIALIZE);
     assert.equal(anonymous.status, 401, 'no token is rejected');
 
-    const wrong = await fetch(url, {
-      method: 'POST',
-      headers: { ...headers, Authorization: 'Bearer not-the-token' },
-      body,
-    });
+    const wrong = await postRpc(url, INITIALIZE, { token: 'not-the-token' });
     assert.equal(wrong.status, 401, 'a wrong token is rejected');
 
-    const good = await fetch(url, {
-      method: 'POST',
-      headers: { ...headers, Authorization: `Bearer ${TOKEN}` },
-      body,
-    });
+    const short = await postRpc(url, INITIALIZE, { token: brain.token.slice(0, 4) });
+    assert.equal(short.status, 401, 'a prefix of the token is rejected');
+
+    const good = await postRpc(url, INITIALIZE, { token: brain.token });
     assert.equal(good.status, 200, 'the right token is accepted');
   } finally {
-    child.kill();
-    await app.close();
+    await brain.stop();
+  }
+});
+
+test('mcp over http: a connector can read and write the real graph in-process', async () => {
+  const brain = await startApp();
+  const url = `${brain.url}/mcp`;
+  const token = brain.token;
+  try {
+    const init = await postRpc(url, INITIALIZE, { token });
+    const session = init.headers.get('mcp-session-id');
+    assert.ok(session, 'the transport hands back a session id');
+    assert.equal(init.message.result.serverInfo.name, 'second-brain');
+
+    await postRpc(url, { jsonrpc: '2.0', method: 'notifications/initialized' }, { token, session });
+
+    const listed = await postRpc(url, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, { token, session });
+    const names = listed.message.result.tools.map((t) => t.name);
+    assert.ok(names.includes('remember') && names.includes('search') && names.includes('speak'));
+
+    const wrote = await postRpc(
+      url,
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: {
+          name: 'remember',
+          arguments: { nodes: [{ label: 'Kyoto trip', type: 'event', summary: 'Cherry blossom season.' }] },
+        },
+      },
+      { token, session },
+    );
+    assert.equal(wrote.message.result.isError, false, 'the write succeeded');
+
+    // The point of merging the bridge into the app: a connector's write lands in
+    // the same store the 3D view is reading, with no second process involved.
+    const graph = await (await fetch(`${brain.url}/api/graph`)).json();
+    assert.ok(
+      graph.nodes.some((n) => n.label === 'Kyoto trip'),
+      'what ChatGPT wrote is in the graph the browser sees',
+    );
+
+    const found = await postRpc(
+      url,
+      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'search', arguments: { query: 'kyoto' } } },
+      { token, session },
+    );
+    assert.match(found.message.result.content[0].text, /Kyoto trip/, 'search finds it again');
+  } finally {
+    await brain.stop();
+  }
+});
+
+test('viewers are told which writes came from another app', async () => {
+  const brain = await startApp();
+  try {
+    const write = (label, source) => ({
+      name: 'remember',
+      input: { nodes: [{ label, type: 'fact', summary: label }] },
+      ...(source ? { source } : {}),
+    });
+
+    const seen = await watchEvents(brain.url, async () => {
+      // The app's own subscription provider, reaching its tools over MCP.
+      await callToolOverHttp(brain.url, write('From the app', 'brain'));
+      // Claude Desktop or ChatGPT.
+      await callToolOverHttp(brain.url, write('From ChatGPT'));
+      // Anything else is treated as external rather than taken at its word.
+      await callToolOverHttp(brain.url, write('Claiming to be local', 'local'));
+    });
+
+    assert.deepEqual(
+      seen.filter((e) => e.name === 'graph_delta').map((e) => e.data.source),
+      ['brain', 'mcp', 'mcp'],
+      'only the app itself may claim a write is its own',
+    );
+  } finally {
+    await brain.stop();
   }
 });
 
@@ -256,5 +475,5 @@ test('mcp: an unreachable app produces a useful message, not a crash', async () 
   const result = res.get(2).result;
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /Could not reach the second brain/);
-  assert.match(result.content[0].text, /npm run serve/, 'tells the user how to fix it');
+  assert.match(result.content[0].text, /npm start/, 'tells the user how to fix it');
 });

@@ -36,6 +36,9 @@ const el = {
   chatPanel: $('chatPanel'),
   leftPanel: $('leftPanel'),
   panelToggle: $('panelToggle'),
+  btnHelp: $('btnHelp'),
+  helpPanel: $('helpPanel'),
+  helpClose: $('helpClose'),
 };
 
 const graph = new BrainGraph(el.canvas);
@@ -90,13 +93,13 @@ async function init() {
     voice.setMode(health.voice?.startsWith('openai') ? 'server' : 'browser');
 
     if (!health.hasKey) {
-      setStatus(`${health.provider} · no API key`, true);
+      setStatus('not connected to a brain yet', true);
       systemMessage(
-        `No API key found for <b>${health.provider}</b>. Add it to <code>.env</code> and restart — ` +
-          `the graph works without one, but nothing will talk back.`,
+        'Nothing can talk back yet. In a terminal, run <code>npm run setup</code> — it will connect ' +
+          'your Claude subscription, or tell you exactly what it needs.',
       );
     } else {
-      setStatus(`${health.provider} · ${health.model} · ${health.embeddings} embeddings`);
+      setStatus(describeBrain(health), `${health.model} · ${health.embeddings} embeddings · ${health.voice} voice`);
     }
   } catch (err) {
     setStatus('server unreachable', true);
@@ -108,8 +111,8 @@ async function init() {
 
   if (!graphData.nodes.length) {
     systemMessage(
-      'Memory is empty. Anything you tell it from here gets stored as nodes and connections — ' +
-        'watch the graph build itself.',
+      'Memory is empty. Tell it something true about your week and watch the graph build itself — ' +
+        'or press <b>Help</b> for ideas.',
     );
   }
 }
@@ -138,18 +141,25 @@ function connectLiveEvents() {
     refreshTimer = setTimeout(refreshGraph, 350); // coalesce bursts of writes
   };
 
+  // 'local' — tools ran in this process for a turn you typed here.
+  // 'brain'  — same thing, but the subscription provider reached them over MCP.
+  // 'mcp'    — genuinely another app: Claude Desktop, ChatGPT.
+  const isElsewhere = (data) => data.source === 'mcp';
+
   source.addEventListener('graph_delta', (e) => {
     const data = parse(e);
     scheduleRefresh();
-    if (data.source && data.source !== 'local') showCaption('memory updated externally');
+    if (isElsewhere(data)) showCaption('memory updated externally');
   });
 
   source.addEventListener('focus', (e) => {
     const data = parse(e);
-    // Only follow the camera for external callers; a local turn already did it.
+    // A turn that ran in-process already flew the camera from the chat stream;
+    // anything reaching tools over MCP — including our own subscription
+    // provider — only ever surfaces here, so it has to be followed.
     if (data.source && data.source !== 'local' && data.ids?.length) {
       graph.focus(data.ids, data.note);
-      if (data.note) showCaption(data.note);
+      if (isElsewhere(data) && data.note) showCaption(data.note);
     }
   });
 
@@ -380,9 +390,18 @@ function setMood(mood) {
   el.brandOrb.classList.toggle('speaking', mood === 'speaking');
 }
 
-function setStatus(text, warn = false) {
+/** Plain English, not config values — the detail goes in the tooltip. */
+function describeBrain(health) {
+  if (health.provider === 'claude-code') return 'running on your Claude subscription';
+  if (health.provider === 'anthropic') return 'running on Claude';
+  return 'running on ChatGPT';
+}
+
+function setStatus(text, detailOrWarn = false) {
   el.statusLine.textContent = text;
+  const warn = detailOrWarn === true;
   el.statusLine.style.color = warn ? 'var(--warn)' : '';
+  el.statusLine.title = typeof detailOrWarn === 'string' ? detailOrWarn : '';
 }
 
 let captionTimer;
@@ -522,6 +541,20 @@ function wireEvents() {
     ears.toggle();
   };
 
+  const showHelp = (on) => el.helpPanel.classList.toggle('hidden', !on);
+  el.btnHelp.onclick = () => showHelp(true);
+  el.helpClose.onclick = () => showHelp(false);
+  el.helpPanel.onclick = (e) => {
+    if (e.target === el.helpPanel) showHelp(false); // click the backdrop to dismiss
+  };
+  // The examples aren't decoration — clicking one sends it.
+  for (const li of el.helpPanel.querySelectorAll('.examples li')) {
+    li.onclick = () => {
+      showHelp(false);
+      send(li.textContent.replace(/^[\s“"]+|[\s”"]+$/g, ''));
+    };
+  }
+
   el.btnConsolidate.onclick = consolidate;
   el.btnReset.onclick = () => {
     graph.resetView();
@@ -557,9 +590,11 @@ function wireEvents() {
     if (e.key === 'Escape') {
       voice.cancel();
       hideNode();
+      el.helpPanel.classList.add('hidden');
       return;
     }
     if (typing) return;
+    if (e.key === '?') el.btnHelp.click();
     if (e.key === 'v') el.btnVoice.click();
     if (e.key === 'r') el.btnReset.click();
     if (e.key === '/') {

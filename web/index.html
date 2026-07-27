@@ -31,6 +31,7 @@
           <span class="ico">🧠</span><span>Consolidate</span>
         </button>
         <button class="tool" id="btnReset" title="Reset camera (R)"><span class="ico">⌖</span><span>Recenter</span></button>
+        <button class="tool" id="btnHelp" title="How to use this (?)"><span class="ico">?</span><span>Help</span></button>
         <a class="tool" id="btnExport" href="/api/export" download title="Download memory as JSON">
           <span class="ico">⭳</span><span>Export</span>
         </a>
@@ -91,6 +92,50 @@
         <div class="composer-status" id="composerStatus"></div>
       </div>
     </section>
+
+    <!-- help -->
+    <div class="help-backdrop hidden" id="helpPanel">
+      <div class="help-card">
+        <div class="panel-head">
+          <span>How to use this</span>
+          <button class="x" id="helpClose" aria-label="Close">×</button>
+        </div>
+        <div class="help-body">
+          <h4>Just talk to it</h4>
+          <p>
+            Tell it things the way you'd tell a person. It decides what's worth keeping, files it as
+            connected memories, and says the answer out loud.
+          </p>
+          <ul class="examples">
+            <li>“Remember my sister Priya's birthday is 3 June.”</li>
+            <li>“I decided to switch the project to Postgres because of the JSON queries.”</li>
+            <li>“What do you know about my running training?”</li>
+            <li>“How is Ana connected to Lisbon?”</li>
+          </ul>
+
+          <h4>Reading the graph</h4>
+          <p>
+            Every dot is a memory, every line a connection. Bigger and brighter means more important.
+            Click any dot to inspect it. The camera flies to whatever it's talking about.
+          </p>
+
+          <h4>Shortcuts</h4>
+          <div class="keys">
+            <span><kbd>/</kbd> search</span>
+            <span><kbd>Space</kbd> talk</span>
+            <span><kbd>V</kbd> mute</span>
+            <span><kbd>R</kbd> recenter</span>
+            <span><kbd>Esc</kbd> stop talking</span>
+          </div>
+
+          <h4>Connected apps</h4>
+          <p id="helpConnected">
+            You can also talk to this brain from Claude or ChatGPT — it'll answer out loud here and the
+            graph will grow while you watch. Run <code>npm run setup</code> to connect them.
+          </p>
+        </div>
+      </div>
+    </div>
 
     <!-- center bottom: what the camera is looking at -->
     <div class="focus-caption" id="focusCaption"></div>

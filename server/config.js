@@ -1,7 +1,21 @@
 import 'dotenv/config';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const env = process.env;
+
+/** Is Claude Code installed locally? If so a Max/Pro plan can drive this. */
+function hasClaudeCode() {
+  try {
+    const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['claude'], {
+      encoding: 'utf8',
+      timeout: 3000,
+    });
+    return probe.status === 0 && !!probe.stdout.trim();
+  } catch {
+    return false;
+  }
+}
 
 function pickProvider() {
   const explicit = (env.BRAIN_PROVIDER || '').trim().toLowerCase();
@@ -10,9 +24,14 @@ function pickProvider() {
   // Runs on a Claude Pro/Max subscription via the locally authenticated
   // Claude Code, rather than on separately-billed API credits.
   if (explicit === 'claude-code' || explicit === 'subscription' || explicit === 'max') return 'claude-code';
+
   if (env.ANTHROPIC_API_KEY) return 'anthropic';
   if (env.OPENAI_API_KEY) return 'openai';
-  return 'anthropic'; // default target; server reports "no key" until one is set
+  // No keys configured. If Claude Code is installed, the user almost certainly
+  // has a subscription — use it rather than demanding an API key they may not
+  // want to buy. This is what makes a fresh clone work with no .env at all.
+  if (hasClaudeCode()) return 'claude-code';
+  return 'anthropic'; // nothing available; the UI explains how to fix it
 }
 
 /**
