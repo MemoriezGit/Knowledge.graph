@@ -13,7 +13,9 @@ let client = null;
 
 function openai() {
   if (!config.openai.apiKey) return null;
-  client ||= new OpenAI({ apiKey: config.openai.apiKey });
+  // Pass baseURL explicitly rather than relying on the SDK reading the env var,
+  // so pointing at a gateway works the same way it does for the chat provider.
+  client ||= new OpenAI({ apiKey: config.openai.apiKey, baseURL: config.openai.baseURL });
   return client;
 }
 
@@ -37,13 +39,36 @@ export async function embed(texts) {
     const res = await api.embeddings.create({
       model: config.openai.embedModel,
       input: list.map((t) => (t && t.trim()) || ' '),
+      // Ask for plain floats. The SDK defaults to base64 and decodes it itself,
+      // which is fine against OpenAI but silently yields zero vectors from an
+      // OpenAI-compatible server that answers with a float array regardless —
+      // and a silently zeroed vector poisons recall with no error anywhere.
+      encoding_format: 'float',
     });
     // The API preserves input order, but sort by index defensively.
-    return res.data.sort((a, b) => a.index - b.index).map((d) => Float32Array.from(d.embedding));
+    const vectors = res.data
+      .sort((a, b) => a.index - b.index)
+      .map((d) => Float32Array.from(d.embedding || []));
+
+    // Belt and braces for the same failure mode: a vector that is empty or all
+    // zeros carries no signal, so prefer the offline one that at least works.
+    if (vectors.length !== list.length || vectors.some(isDegenerate)) {
+      console.warn('[embeddings] the endpoint returned unusable vectors; using local vectors');
+      return list.map(localEmbed);
+    }
+    return vectors;
   } catch (err) {
     console.warn(`[embeddings] OpenAI call failed (${err.message}); using local vectors`);
     return list.map(localEmbed);
   }
+}
+
+function isDegenerate(vec) {
+  if (!vec.length) return true;
+  for (let i = 0; i < vec.length; i++) {
+    if (vec[i] !== 0 && Number.isFinite(vec[i])) return false;
+  }
+  return true;
 }
 
 export async function embedOne(text) {

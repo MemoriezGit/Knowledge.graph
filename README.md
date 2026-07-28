@@ -11,12 +11,24 @@ It isn't a chatbot with a graph stuck next to it. The model owns the graph — e
 ## Start here
 
 ```bash
+git clone https://github.com/MemoriezGit/Knowledge.graph.git
+cd Knowledge.graph
 npm install
 npm run setup     # connects your Claude/ChatGPT account, tells you if anything's missing
 npm start         # → http://localhost:8787
 ```
 
-That's the whole thing. Two commands the first time, **`npm start` every day after**.
+That's the whole thing. Once at the start, then **`npm start` every day after**.
+
+Or let a script do all of it, including opening the browser:
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/MemoriezGit/Knowledge.graph/HEAD/scripts/install.sh | bash
+
+# Windows (PowerShell)
+iwr -useb https://raw.githubusercontent.com/MemoriezGit/Knowledge.graph/HEAD/scripts/install.ps1 | iex
+```
 
 `npm run setup` is also the "is this still working?" command — re-run it any time. It checks that your brain can actually answer, registers this app with Claude Code for you, and prints the URL + token for a ChatGPT connector.
 
@@ -154,7 +166,7 @@ All optional. See `.env.example` — and note that `npm run setup` writes the on
 | `npm run setup` | Connect / verify your accounts. Safe to re-run |
 | `npm run dev` | Hot-reloading server + Vite dev UI, for hacking on it |
 | `npm run seed` | A small demo graph |
-| `npm test` | 25 tests, no key, no network, ~3s |
+| `npm test` | 31 tests, no key, no network, ~6s |
 
 ### API
 
@@ -186,8 +198,8 @@ All optional. See `.env.example` — and note that `npm run setup` writes the on
 
 ## Tests
 
-`npm test` runs 25 tests against mock Anthropic and OpenAI servers that speak
-the real streaming wire formats — no API key, no network, ~3 seconds.
+`npm test` runs 31 tests against mock Anthropic and OpenAI servers that speak
+the real streaming wire formats — no API key, no network, ~6 seconds.
 
 The interesting coverage is the tool loop: tool-call JSON arrives split
 mid-token and has to be reassembled, results fed back, and the loop run to a
@@ -201,7 +213,7 @@ subprocess and spoken to in JSON-RPC, and `/mcp` is exercised against an
 actually-booted app on a scratch data dir — so "ChatGPT writes a memory and the
 browser sees it" is a test, not a hope.
 
-Four of the tests are regression guards for bugs found while building this,
+Several of the tests are regression guards for bugs found while building this,
 and each was mutation-tested — the bug reintroduced, the suite confirmed to
 fail on exactly that test, then reverted:
 
@@ -211,6 +223,8 @@ fail on exactly that test, then reverted:
 | `a failed turn leaves no orphan user message` | the user turn was persisted before the provider call, so a failed request left a dangling message replayed as history forever |
 | `request shape matches the API contract` | sending `temperature`, which 400s on Opus 5 |
 | `/mcp refuses requests without the right bearer token` | an unauthenticated connector endpoint exposing everything you've ever told it |
+| `writes are labelled by who asked` | the app announcing your own typed message back to you as an external change |
+| `embeddings ask for plain floats` | the OpenAI SDK's base64 default silently decoding to zero vectors against a compatible server, quietly poisoning recall |
 
 ## Layout
 
